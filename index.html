@@ -234,12 +234,57 @@
     background: #fff;
   }
   .fx-world-label {
-    padding: 8px 12px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     color: var(--line);
     background: var(--accent-soft);
+    gap: 8px;
+  }
+  .fx-world-label .fx-world-title {
+    flex: 1;
+    min-width: 0;
+  }
+  .fx-search-btn {
+    background: transparent;
+    border: 1px solid rgba(44, 74, 67, 0.45);
+    color: var(--line);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .fx-search-btn:active { opacity: 0.7; }
+  .fx-search-wrap {
+    display: none;
+    padding: 8px 12px;
+    background: var(--accent-soft);
+    border-bottom: 1px solid rgba(44, 74, 67, 0.15);
+  }
+  .fx-search-wrap.show { display: block; }
+  .fx-search-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid rgba(44, 74, 67, 0.35);
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--ink);
+    outline: none;
+  }
+  .fx-search-input:focus {
+    border-color: var(--line);
+  }
+  .fx-search-input::placeholder {
+    color: #999;
   }
   .fx-scroll {
     max-height: 220px;
@@ -976,7 +1021,13 @@ body { margin: 0; }
       <div class="fx-pinned" id="fxPinned">
         <div class="fx-err">환율 불러오는 중…</div>
       </div>
-      <div class="fx-world-label">전세계 환율 · 스크롤</div>
+      <div class="fx-world-label">
+        <span class="fx-world-title">전세계 환율 · 스크롤</span>
+        <button type="button" class="fx-search-btn" id="fxSearchBtn" onclick="toggleFxSearch()">검색</button>
+      </div>
+      <div class="fx-search-wrap" id="fxSearchWrap">
+        <input type="text" class="fx-search-input" id="fxSearchInput" placeholder="나라 / 통화 검색 (예: 일본, USD)" autocomplete="off">
+      </div>
       <div class="fx-scroll" id="fxScroll">
         <div class="fx-err">불러오는 중…</div>
       </div>
@@ -991,6 +1042,9 @@ body { margin: 0; }
   var FX_CACHE_KEY = "fx_rates_v2";
   var FX_INTERVAL_MS = 5 * 60 * 1000;
   var prevRates = null;
+  var lastAllRates = null;
+  var lastMeta = null;
+  var fxSearchQuery = "";
 
   var PINNED = [
     { key: "USD", label: "USD", unit: 1, digits: 2 },
@@ -1082,9 +1136,16 @@ body { margin: 0; }
     }
     pinnedEl.innerHTML = pinHtml;
 
-    // 전세계 목록 (KRW 제외, 상단 4종 포함해 알파벳 정렬)
+    lastAllRates = allRates;
+    lastMeta = meta;
+
+    // 전세계 목록 (KRW 제외, 상단 4종 포함해 알파벳 정렬) + 검색 필터
+    var q = (fxSearchQuery || "").trim().toLowerCase();
     var codes = Object.keys(allRates).filter(function(c) {
-      return c !== "KRW" && allRates[c] != null && isFinite(allRates[c]) && allRates[c] > 0;
+      if (c === "KRW" || allRates[c] == null || !isFinite(allRates[c]) || allRates[c] <= 0) return false;
+      if (!q) return true;
+      var name = (CUR_NAMES[c] || "").toLowerCase();
+      return c.toLowerCase().indexOf(q) !== -1 || name.indexOf(q) !== -1;
     });
     codes.sort();
 
@@ -1102,7 +1163,9 @@ body { margin: 0; }
       worldHtml += rowHtml(code, label, per, digits, pPer);
     }
     if (!worldHtml) {
-      worldHtml = '<div class="fx-err">전세계 환율 데이터가 없습니다.</div>';
+      worldHtml = q
+        ? '<div class="fx-err">검색 결과가 없습니다.</div>'
+        : '<div class="fx-err">전세계 환율 데이터가 없습니다.</div>';
     }
     scrollEl.innerHTML = worldHtml;
 
@@ -1186,6 +1249,53 @@ body { margin: 0; }
       }
     ];
   }
+
+  window.toggleFxSearch = function() {
+    var wrap = document.getElementById("fxSearchWrap");
+    var input = document.getElementById("fxSearchInput");
+    if (!wrap) return;
+    var show = !wrap.classList.contains("show");
+    if (show) {
+      wrap.classList.add("show");
+      if (input) {
+        input.value = fxSearchQuery || "";
+        setTimeout(function() { input.focus(); }, 50);
+      }
+    } else {
+      wrap.classList.remove("show");
+      fxSearchQuery = "";
+      if (input) input.value = "";
+      if (lastAllRates) renderFx(lastAllRates, lastMeta || {});
+    }
+  };
+
+  window.filterFxWorld = function(q) {
+    fxSearchQuery = q || "";
+    if (lastAllRates) renderFx(lastAllRates, lastMeta || {});
+  };
+
+  // 검색 입력 이벤트 연결
+  (function bindFxSearch() {
+    function bind() {
+      var input = document.getElementById("fxSearchInput");
+      if (!input || input._fxBound) return;
+      input._fxBound = true;
+      input.addEventListener("input", function() {
+        filterFxWorld(this.value);
+      });
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") {
+          toggleFxSearch();
+        }
+      });
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", bind);
+    } else {
+      bind();
+    }
+    setTimeout(bind, 500);
+  })();
 
   window.loadFxRates = function(force) {
     var pinnedEl = document.getElementById("fxPinned");
